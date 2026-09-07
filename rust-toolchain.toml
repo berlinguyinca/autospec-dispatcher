@@ -1,0 +1,6 @@
+# Pinned so that formatting is reproducible across CI, developer machines and
+# cluster agents. Three live rustfmt versions is how a repository drifts
+# fmt-dirty and every wide patch starts carrying unrelated churn.
+[toolchain]
+channel = "1.91.0"
+components = ["rustfmt", "clippy"]
