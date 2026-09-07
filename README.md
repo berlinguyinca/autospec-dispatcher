@@ -65,6 +65,12 @@ fine" becomes expensive:
 3. **Absent judgement is never a pass.** An empty, malformed, or timed-out model
    response is `UNKNOWN`. It is never silently read as "no problems found".
 
+## How this fits with the other repositories
+
+See [`docs/SYSTEM-MAP.md`](docs/SYSTEM-MAP.md) for the four planes, the
+end-to-end path of a single issue, the judgement split, and the inference
+registration path — as diagrams.
+
 ## Status
 
 Founding design. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
