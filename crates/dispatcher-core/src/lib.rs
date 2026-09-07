@@ -4,6 +4,8 @@
 //! pass/fail, and a model decides only what a failure *means*. See
 //! `docs/ARCHITECTURE.md`.
 
+pub mod self_repair;
+
 /// Why a check failed, established mechanically by comparing against the merge
 /// base — never by asking a model.
 ///
