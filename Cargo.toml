@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/dispatcher-core", "crates/autospec-dispatcher"]
+members = ["crates/dispatcher-core"]
 
 [workspace.package]
 version = "0.1.0"

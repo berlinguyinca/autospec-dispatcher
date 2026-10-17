@@ -3,12 +3,5 @@
 version = 4
 
 [[package]]
-name = "autospec-dispatcher"
-version = "0.1.0"
-dependencies = [
- "dispatcher-core",
-]
-
-[[package]]
 name = "dispatcher-core"
 version = "0.1.0"
