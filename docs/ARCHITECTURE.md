@@ -7,6 +7,11 @@ cannot make these calls, a human still has to.
 Each says which layer owns it, because the split between "code decides" and
 "model decides" is the whole design.
 
+> **Scope.** This repo ships `dispatcher-core`, a **library** — the reviewer
+> panel and its separation-of-duties policy — used by whoever reviews a change.
+> There is **no dispatcher service and no binary** (spec section 4 item 2); this
+> catalogue is the design the library encodes.
+
 ---
 
 ## 1. Did the agent run at all?
@@ -106,7 +111,9 @@ the token budget and returned empty content.
 **Rules:**
 - corroboration across **independent models** is the bar; a single approval is not
 - `UNKNOWN` is never a pass, and never a fail — it is absent judgement, and it must be visible in the tally
-- a reviewer must never review a change implemented by the same model instance
+- a reviewer must never share the implementer's **model family** — independence
+  is by family, case-insensitively, not by exact model or endpoint, and an
+  **unknown family is not independent**: the panel fails closed
 
 Run-to-run variance on identical inputs has been large enough (35 vs 77
 citations on one config) that a single reviewer's findings are not reproducible.
