@@ -70,19 +70,51 @@ pub struct ModelInstance {
     pub model: String,
     /// Serving deployment, e.g. `prod-a`.
     pub endpoint: String,
+    /// Model family (e.g. `glm`, `anthropic`), if known. Independence is
+    /// judged by family, and an unknown family proves nothing —
+    /// [`ReviewPanel::assemble`] fails closed on `None`.
+    pub family: Option<String>,
 }
 
 impl ModelInstance {
+    /// An instance with no known family. `assemble` rejects such an instance
+    /// (fail closed): an unknown family cannot be proven independent.
     pub fn new(model: impl Into<String>, endpoint: impl Into<String>) -> Self {
         Self {
             model: model.into(),
             endpoint: endpoint.into(),
+            family: None,
+        }
+    }
+
+    /// An instance with a known family. Reviewer independence is judged by
+    /// family (case-insensitive), so a reviewer whose family matches the
+    /// implementer's is rejected whatever the model or endpoint.
+    pub fn with_family(
+        model: impl Into<String>,
+        endpoint: impl Into<String>,
+        family: Option<impl Into<String>>,
+    ) -> Self {
+        Self {
+            model: model.into(),
+            endpoint: endpoint.into(),
+            family: family.map(|f| f.into()),
         }
     }
 
     /// Whether both instances run the same underlying model.
     pub fn same_model(&self, other: &ModelInstance) -> bool {
         self.model == other.model
+    }
+
+    /// Whether both instances share a known model family, case-insensitively.
+    /// An unknown family on either side is never a match: it is a failure to
+    /// prove independence, reported as [`ReviewError::UnknownFamily`].
+    pub fn same_family(&self, other: &ModelInstance) -> bool {
+        match (&self.family, &other.family) {
+            (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+            _ => false,
+        }
     }
 }
 
@@ -148,6 +180,10 @@ pub enum ReviewError {
     DuplicateModel { model: String },
     /// A reviewer is the instance that implemented the change.
     SeparationOfDuties { model: String, endpoint: String },
+    /// The implementer or a reviewer has no known model family. Independence
+    /// is judged by family, so an unknown family proves nothing — the panel
+    /// cannot be assembled (fail closed).
+    UnknownFamily { model: String, endpoint: String },
 }
 
 impl std::fmt::Display for ReviewError {
@@ -164,6 +200,10 @@ impl std::fmt::Display for ReviewError {
             ReviewError::SeparationOfDuties { model, endpoint } => write!(
                 f,
                 "{model}@{endpoint} implemented this change and cannot review it"
+            ),
+            ReviewError::UnknownFamily { model, endpoint } => write!(
+                f,
+                "{model}@{endpoint} has no known model family; independence is judged by family, so this is not a pass (fail closed)"
             ),
         }
     }
@@ -243,17 +283,35 @@ impl ReviewPanel {
                 got: reviews.len(),
             });
         }
+        // Independence is judged by model family, and an unknown family
+        // proves nothing. Fail closed: the implementer and every reviewer must
+        // carry a known family, or the panel cannot be assembled.
+        if implementer.family.is_none() {
+            return Err(ReviewError::UnknownFamily {
+                model: implementer.model.clone(),
+                endpoint: implementer.endpoint.clone(),
+            });
+        }
         for (i, reviewer) in reviews.iter().enumerate() {
-            if reviewer.reviewer == implementer {
+            let r = &reviewer.reviewer;
+            if r.family.is_none() {
+                return Err(ReviewError::UnknownFamily {
+                    model: r.model.clone(),
+                    endpoint: r.endpoint.clone(),
+                });
+            }
+            // A reviewer must never share the implementer's model family,
+            // whatever the model or endpoint (case-insensitive).
+            if r.same_family(&implementer) {
                 return Err(ReviewError::SeparationOfDuties {
-                    model: reviewer.reviewer.model.clone(),
-                    endpoint: reviewer.reviewer.endpoint.clone(),
+                    model: r.model.clone(),
+                    endpoint: r.endpoint.clone(),
                 });
             }
             for other in &reviews[..i] {
-                if reviewer.reviewer.same_model(&other.reviewer) {
+                if r.same_model(&other.reviewer) {
                     return Err(ReviewError::DuplicateModel {
-                        model: reviewer.reviewer.model.clone(),
+                        model: r.model.clone(),
                     });
                 }
             }
@@ -391,7 +449,9 @@ mod tests {
     }
 
     fn instance(model: &str) -> ModelInstance {
-        ModelInstance::new(model, "prod")
+        // Test convention: each model is its own family, so distinct models
+        // are distinct families (independence is judged by family, not model).
+        ModelInstance::with_family(model, "prod", Some(model))
     }
 
     fn review(model: &str, verdict: Verdict) -> Review {
@@ -463,7 +523,7 @@ mod tests {
                 review("GLM-Q6", Verdict::Approve),
                 // same model behind a different endpoint is still the same model
                 Review {
-                    reviewer: ModelInstance::new("GLM-Q6", "spare"),
+                    reviewer: ModelInstance::with_family("GLM-Q6", "spare", Some("GLM-Q6")),
                     verdict: Verdict::Approve,
                     findings: Vec::new(),
                 },
@@ -481,7 +541,7 @@ mod tests {
 
     #[test]
     fn implementer_may_never_review_its_own_change() {
-        let implementer = ModelInstance::new("Builder-7", "prod");
+        let implementer = ModelInstance::with_family("Builder-7", "prod", Some("builder"));
         let err = ReviewPanel::assemble(
             &ReviewConfig::default(),
             implementer.clone(),
@@ -500,6 +560,111 @@ mod tests {
             err,
             ReviewError::SeparationOfDuties {
                 model: "Builder-7".to_owned(),
+                endpoint: "prod".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_reviewer_sharing_the_implementers_family_is_rejected_even_on_a_different_model() {
+        // Same family, different model: separation of duties is by family, not
+        // by exact model. "Builder-9" is a different model but the same family
+        // as "Builder-7".
+        let implementer = ModelInstance::with_family("Builder-7", "prod", Some("builder"));
+        let err = ReviewPanel::assemble(
+            &ReviewConfig::default(),
+            implementer,
+            vec![
+                Review {
+                    reviewer: ModelInstance::with_family("Builder-9", "prod", Some("builder")),
+                    verdict: Verdict::Approve,
+                    findings: Vec::new(),
+                },
+                review("Flash-Next", Verdict::Approve),
+                review("Qwen-27B-Q8", Verdict::Approve),
+            ],
+        )
+        .expect_err("a same-family reviewer is not independent");
+        assert_eq!(
+            err,
+            ReviewError::SeparationOfDuties {
+                model: "Builder-9".to_owned(),
+                endpoint: "prod".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn family_matching_is_case_insensitive() {
+        let implementer = ModelInstance::with_family("Builder-7", "prod", Some("Builder"));
+        let err = ReviewPanel::assemble(
+            &ReviewConfig::default(),
+            implementer,
+            vec![
+                Review {
+                    reviewer: ModelInstance::with_family("Builder-9", "prod", Some("builder")),
+                    verdict: Verdict::Approve,
+                    findings: Vec::new(),
+                },
+                review("Flash-Next", Verdict::Approve),
+                review("Qwen-27B-Q8", Verdict::Approve),
+            ],
+        )
+        .expect_err("family match is case-insensitive");
+        assert_eq!(
+            err,
+            ReviewError::SeparationOfDuties {
+                model: "Builder-9".to_owned(),
+                endpoint: "prod".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn an_implementer_with_no_known_family_fails_closed() {
+        // Independence is judged by family; an unknown family proves nothing.
+        let implementer = ModelInstance::new("Builder-7", "prod");
+        let err = ReviewPanel::assemble(
+            &ReviewConfig::default(),
+            implementer,
+            vec![
+                review("GLM-Q6", Verdict::Approve),
+                review("Flash-Next", Verdict::Approve),
+                review("Qwen-27B-Q8", Verdict::Approve),
+            ],
+        )
+        .expect_err("an unknown family is not independence");
+        assert_eq!(
+            err,
+            ReviewError::UnknownFamily {
+                model: "Builder-7".to_owned(),
+                endpoint: "prod".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_reviewer_with_no_known_family_fails_closed() {
+        let implementer = ModelInstance::with_family("Builder-7", "prod", Some("builder"));
+        let err = ReviewPanel::assemble(
+            &ReviewConfig::default(),
+            implementer,
+            vec![
+                // no family: independence cannot be proven
+                Review {
+                    reviewer: ModelInstance::new("Mystery-1", "prod"),
+                    verdict: Verdict::Approve,
+                    findings: Vec::new(),
+                },
+                review("Flash-Next", Verdict::Approve),
+                review("Qwen-27B-Q8", Verdict::Approve),
+            ],
+        )
+        .expect_err("an unknown family is not independence");
+        assert_eq!(
+            err,
+            ReviewError::UnknownFamily {
+                model: "Mystery-1".to_owned(),
                 endpoint: "prod".to_owned(),
             }
         );
