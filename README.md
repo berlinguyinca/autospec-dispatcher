@@ -4,6 +4,12 @@ The **dispatch plane** for AutoSpec: it drains a backlog larger than capacity,
 judges what came back, and repairs itself through the same review path it
 enforces on everything else.
 
+> **What this repo ships today:** [`dispatcher-core`](crates/dispatcher-core) —
+> a **library** (the reviewer panel and its separation-of-duties policy) used by
+> whoever reviews a change. There is **no binary and no dispatcher service**;
+> the plane described below is the design, and `dispatcher-core` is its first,
+> review-facing piece.
+
 | Plane | System | Question it answers |
 | --- | --- | --- |
 | Control | [`autospec`](https://github.com/berlinguyinca/autospec) | What work should happen? |
